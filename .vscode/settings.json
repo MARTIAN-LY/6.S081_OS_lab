@@ -4,6 +4,9 @@
         "types.h": "c",
         "stat.h": "c",
         "fs.h": "c",
-        "param.h": "c"
+        "param.h": "c",
+        "defs.h": "c",
+        "proc.h": "c",
+        "sleeplock.h": "c"
     }
 }

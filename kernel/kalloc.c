@@ -80,3 +80,18 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+// Collect the amount of free memory
+uint64 freeMemory()
+{
+  // Number of free pages.
+  uint64 pages = 0;
+  for (struct run *p = kmem.freelist; p ; p = p->next)
+  {
+    pages++;
+  }
+  
+  // printf("Page good: %d \n",pages);
+  // Each page is 2^12 bytes.
+  return pages << 12 ;
+}

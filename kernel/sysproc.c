@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -99,5 +100,34 @@ sys_uptime(void)
 uint64
 sys_trace(void)
 {
+  // mask = a0
+  int mask;
+  if(argint(0, &mask) < 0)
+    return -1;
+
+  // Set syscall number which is traced
+  myproc()->mask = mask;
+  
+  return 0;
+}
+
+uint64
+sys_sysinfo(void)
+{
+  // info = virtual address of the destination in userspace.
+  uint64 addr;
+  if(argaddr(0, &addr) < 0)
+    return -1;
+
+  // info is in kernel space
+  struct sysinfo info;
+  info.freemem = freeMemory();
+  info.nproc = num_of_uproc();
+  info.freefd = num_of_ufds();
+
+  // copy data from kernel space to user space.
+  if (copyout(myproc()->pagetable, addr, (char*)&info, sizeof(info)) < 0)
+    return -1;
+
   return 0;
 }

@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
@@ -106,7 +109,7 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
-
+  p->mask = 0;
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
@@ -294,6 +297,9 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  // Copy trace syscall number
+  np->mask = p->mask;
 
   release(&np->lock);
 
@@ -692,4 +698,33 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// Collect the number of UNUSED processes
+uint64 num_of_uproc()
+{
+  uint64 num = 0;
+
+  struct proc *p;
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p->state == UNUSED) {
+      num++;
+    }
+  }
+  return num;
+}
+
+// Collect the number of unused file descriptors.
+uint64 num_of_ufds()
+{
+  uint64 num = 0;
+  struct proc* p = myproc();
+  for (int i = 0; i < NOFILE; i++)
+  {
+    if (!p->ofile[i])
+    {
+      num++;
+    }
+  }
+  return num;
 }
