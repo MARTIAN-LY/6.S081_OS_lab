@@ -40,6 +40,7 @@ procinit(void)
       uint64 va = KSTACK((int) (p - proc));
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
       p->kstack = va;
+      p->kstack_pa = (uint64)pa;
   }
   kvminithart();
 }
@@ -121,6 +122,16 @@ found:
     return 0;
   }
 
+  // Kernel pagetable
+  p->k_pagetabel = kvminit_proc();
+  if(p->k_pagetabel == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  // add kernel stack mapping
+  vmmap(p->k_pagetabel, p->kstack, p->kstack_pa, PGSIZE, PTE_R | PTE_W);
+  
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -141,6 +152,11 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+
+  if (p->k_pagetabel)
+    proc_free_kpagetable(p->k_pagetabel);
+  
+  p->k_pagetabel = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -195,6 +211,27 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmfree(pagetable, sz);
 }
 
+/* 
+  Free the process's kernel pagetable,
+  similar to freewalk
+ */
+void proc_free_kpagetable(pagetable_t k_pagetable)
+{
+  for (int i = 0; i < 512; i++)
+  {
+    pte_t pte = k_pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      proc_free_kpagetable((pagetable_t)child);
+      k_pagetable[i] = 0;  
+    } else if(pte & PTE_V){
+      k_pagetable[i] = 0;
+    }
+  }
+  kfree((void*)k_pagetable);
+}
+
 // a user program that calls exec("/init")
 // od -t xC initcode
 uchar initcode[] = {
@@ -230,6 +267,7 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  u2kvmcopy(p->pagetable, p->k_pagetabel, 0, p->sz);
   release(&p->lock);
 }
 
@@ -243,12 +281,16 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if (PGROUNDUP(sz + n) > PLIC){
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    sz = uvmdealloc(p->pagetable, sz, sz + n); 
   }
+  u2kvmcopy(p->pagetable, p->k_pagetabel, p->sz, sz);
   p->sz = sz;
   return 0;
 }
@@ -290,6 +332,9 @@ fork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+
+  // Copy user memory to kernel pagtable
+  u2kvmcopy(np->pagetable, np->k_pagetabel, 0, np->sz);
 
   pid = np->pid;
 
@@ -473,12 +518,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        // Switch to process' kernel pagetable
+        // Flush TLB
+        w_satp(MAKE_SATP(p->k_pagetabel));
+        sfence_vma();
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0; // cpu dosen't run any process now
-
+        kvminithart();  //Switch back to global kernel pagetable
         found = 1;
       }
       release(&p->lock);
